@@ -63,6 +63,14 @@ func (b *ChannelBroker) PushMessage(message ChannelMessage) {
 	b.messages <- message
 }
 
+// Closes this channel
+func (b *ChannelBroker) CloseChannel() {
+	for channel, _ := range b.clients {
+		close(channel)
+	}
+	log.Printf("Channel %s closed.", b.name)
+}
+
 // Posts a new message over http
 func (b *ChannelBroker) PostHTTPMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -106,7 +114,11 @@ func (b *ChannelBroker) ServeHTTPEventStream(w http.ResponseWriter, r *http.Requ
 	// Loop until connection is closed and pool for messages
 	for {
 		select {
-		case message := <-clientChannel:
+		case message, closed := <-clientChannel:
+			if closed {
+				f.Flush()
+				return
+			}
 			encoder.Encode(message)
 			fmt.Fprint(w, "\n\n")
 			f.Flush()
