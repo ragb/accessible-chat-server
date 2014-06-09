@@ -8,10 +8,18 @@ import (
 	"time"
 )
 
+// A chat message
+
 type ChannelMessage struct {
 	content string
 	author  string
 	time    time.Time
+	channel string
+}
+
+type ClientMessage struct {
+	content string
+	author  string
 }
 
 type ChannelBroker struct {
@@ -20,6 +28,7 @@ type ChannelBroker struct {
 	newClients    chan chan ChannelMessage
 	closedClients chan chan ChannelMessage
 	messages      chan ChannelMessage
+	done          chan bool
 }
 
 func NewChannelBroker(name string) *ChannelBroker {
@@ -29,6 +38,7 @@ func NewChannelBroker(name string) *ChannelBroker {
 		newClients:    make(chan chan ChannelMessage),
 		closedClients: make(chan chan ChannelMessage),
 		messages:      make(chan ChannelMessage),
+		done:          make(chan bool),
 	}
 }
 
@@ -44,6 +54,8 @@ func (b *ChannelBroker) Start() {
 			for clientChannel, _ := range b.clients {
 				clientChannel <- message
 			}
+		case <-b.done:
+			return
 		}
 	}
 }
@@ -69,6 +81,7 @@ func (b *ChannelBroker) CloseChannel() {
 		close(channel)
 	}
 	log.Printf("Channel %s closed.", b.name)
+	b.done <- true
 }
 
 // Posts a new message over http
@@ -79,11 +92,17 @@ func (b *ChannelBroker) PostHTTPMessage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	decoder := json.NewDecoder(r.Body)
-	var message ChannelMessage
-	error := decoder.Decode(&message)
+	var clientMessage ClientMessage
+	error := decoder.Decode(&clientMessage)
 	if error != nil {
 		http.Error(w, error.Error(), http.StatusBadRequest)
 		return
+	}
+	message := ChannelMessage{
+		content: clientMessage.content,
+		author:  clientMessage.author,
+		channel: b.name,
+		time:    time.Now(),
 	}
 
 	b.PushMessage(message)
@@ -119,6 +138,7 @@ func (b *ChannelBroker) ServeHTTPEventStream(w http.ResponseWriter, r *http.Requ
 				f.Flush()
 				return
 			}
+			fmt.Fprint(w, "event:usermessage\ndata:")
 			encoder.Encode(message)
 			fmt.Fprint(w, "\n\n")
 			f.Flush()
